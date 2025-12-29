@@ -149,9 +149,18 @@ polygon(#image{objects=Os}=I, Points, Color) ->
                         span   = span(Points),
                         color  = Color}|Os]}.
 
+text(#image{objects=Os}=I, {Xs,Ys}=Sp, #{} = Font, Text, Color) ->
+    {FW,FH} = egd_ttf:get_text_extent(Font, Text),
+    Ep = {Xs + FW, Ys + FH + 5},
+    I#image{objects=[#image_object{
+                        internals = {Font, Text},
+                        type   = text_horizontal,
+                        points = [Sp],
+                        span   = span([Sp,Ep]),
+                        color  = Color}|Os]};
 text(#image{objects=Os}=I, {Xs,Ys}=Sp, Font, Text, Color) ->
     {FW,FH} = egd_font:size(Font),
-    Length = length(Text),
+    Length = string:length(Text),
     Ep = {Xs + Length*FW, Ys + FH + 5},
     I#image{objects=[#image_object{
                         internals = {Font, Text},

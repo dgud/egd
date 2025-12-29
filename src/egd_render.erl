@@ -73,11 +73,11 @@ worker(Type) ->
 worker(Objects, Width, Bg, Type, Collector) ->
     receive
     	{Pid, scan, {Ys, Ye}} ->
-	    lists:foreach(fun
-		(Y) ->
-		    Bin = erlang:list_to_binary(scanline(Y, Objects, {0,0,Width - 1, Bg}, Type)),
-		    Collector ! {scan, Y, Bin}
-		end, lists:seq(Ys,Ye)),
+	    lists:foreach(fun(Y) ->
+                                  Line = scanline(Y, Objects, {0,0,Width - 1, Bg}, Type),
+                                  Bin = erlang:list_to_binary(Line),
+                                  Collector ! {scan, Y, Bin}
+                          end, lists:seq(Ys,Ye)),
 	    Pid ! {self(), scan_complete},
 	    worker(Objects, Width, Bg, Type, Collector);
     	{Pid, scan, Y} ->
@@ -101,8 +101,8 @@ handle_workers(H, Pids) ->
 handle_workers(_, 0, _) -> ok;
 handle_workers(H, Hi, Np) when H > 0 ->
     N = trunc(Hi/(2*Np)),
-    receive 
-	{Pid, scan_complete} -> 
+    receive
+	{Pid, scan_complete} ->
 	    if N < 2 ->
 	    	Pid ! {self(), scan, Hi},
 		handle_workers(H, Hi - 1, Np);
@@ -130,7 +130,12 @@ receive_binaries(H, Bins) when H > 0 ->
 scanline(Y, Os, {_,_,Width,_}=LSB, Type) ->
     OLSs = parse_objects_on_line(Y-1, Width, Os),
     RLSs = resulting_line_spans([LSB|OLSs],Type),
-    [ lists:duplicate(Xr - Xl + 1, <<(trunc(R*255)):8,(trunc(G*255)):8,(trunc(B*255)):8>>) || {_,Xl, Xr, {R,G,B,_}} <- RLSs ].
+    [ render_line_block(Xl, Xr, Col) || {_,Xl, Xr, Col} <- RLSs ].
+
+render_line_block(X, X, {R,G,B,_}) ->
+    <<(trunc(R*255)):8,(trunc(G*255)):8,(trunc(B*255)):8>>;
+render_line_block(Xl, Xr, {R,G,B,_}) when is_integer(Xr) ->
+    lists:duplicate(Xr - Xl + 1, <<(trunc(R*255)):8,(trunc(G*255)):8,(trunc(B*255)):8>>).
 
 resulting_line_spans(LSs,Type) ->
     %% Build a list of "transitions" from left to right.
@@ -186,11 +191,14 @@ color(Trans,Layers,Type,OldC) ->
     end.
 
 color([],_) -> {0.0,0.0,0.0,0.0};
-color([{_,C}|_],opaque) -> C;    
-color(Layers,alpha) -> color1({0.0,0.0,0.0,0.0},Layers).
+color([{_,C}|_],opaque) -> C;
+color([{_,C}|Layers],alpha) -> color1(C,Layers).
 
 color1(Color,[]) -> Color;
-color1(Color,[{_,C}|Layers]) -> color1(alpha_blend(Color,C),Layers).
+color1({_,_,_,1.0}=Color,_) -> Color;
+color1(Color,[{_,C}|Layers]) ->
+    BG = color1(C, Layers),
+    alpha_blend(Color,BG).
 
 modify_layers(Layers,[]) -> Layers;
 modify_layers(Layers,[{{_,Z,start},C}|Trans]) ->
@@ -207,24 +215,24 @@ remove_layer(Layers,Z,C) ->
     Layers -- [{Z,C}].
 
 alpha_blend({R1,G1,B1,A1}, {R2,G2,B2,A2}) when is_float(A1), is_float(A2)->
-  Beta = A2*(1.0 - A1),
-  A = A1 + Beta,
-  R = R1*A1 + R2*Beta,
-  G = G1*A1 + G2*Beta,
-  B = B1*A1 + B2*Beta,
-  {R,G,B,A}.
+    Beta = A2*(1.0 - A1),
+    A = A1 + Beta,
+    R = R1*A1 + R2*Beta,
+    G = G1*A1 + G2*Beta,
+    B = B1*A1 + B2*Beta,
+    {R,G,B,A}.
 
 parse_objects_on_line(Y, Width, Objects) ->
-    parse_objects_on_line(Y, 1, Width, Objects, []).
-parse_objects_on_line(_Y, _Z, _, [], Out) -> lists:flatten(Out);
-parse_objects_on_line(Y, Z, Width, [O|Os], Out) ->
+    parse_objects_on_line(Y, Width, Objects, []).
+parse_objects_on_line(_Y, _, [], Out) -> lists:flatten(Out);
+parse_objects_on_line(Y, Width, [O|Os], Out) ->
     case is_object_on_line(O, Y) of
     	false ->
-	    parse_objects_on_line(Y, Z + 1, Width, Os, Out);
+	    parse_objects_on_line(Y, Width, Os, Out);
 	true ->
-	    OLs  = object_line_data(O,Y,Z),
+	    OLs  = object_line_data(O,Y, 1),
 	    TOLs = trim_object_line_data(OLs, Width),
-	    parse_objects_on_line(Y, Z + 1, Width, Os, [TOLs|Out])
+	    parse_objects_on_line(Y, Width, Os, [TOLs|Out])
     end.
 
 trim_object_line_data(OLs, Width) ->
@@ -286,9 +294,9 @@ object_line_data(#image_object{type=filled_triangle,
     end;    
 
 object_line_data(#image_object{type=line,
-                               intervals=M, color={R,G,B,_}}, Y, Z) ->
+                               intervals=M, color={R,G,B,A}}, Y, Z) ->
     case M of
-        #{Y := Ls} -> [{Z, Xl, Xr, {R,G,B,1.0-C/255}}||{Xl,Xr,C} <- Ls];
+        #{Y := Ls} -> [{Z, Xl, Xr, {R,G,B,A*(1.0-C/255)}}||{Xl,Xr,C} <- Ls];
 	_ -> []
     end;
 
@@ -297,9 +305,15 @@ object_line_data(#image_object{type=polygon,
     [{Z, Xl, Xr, C} || {Yp, Xl, Xr} <- Is, Yp =:= Y];
 
 object_line_data(#image_object{type=text_horizontal,
-                               color=C, intervals=Is}, Y, Z) ->
-    [{Z, Xl, Xr, C} || {Yg, Xl, Xr} <- Is, Yg =:= Y];
-
+                               color={R,G,B,A}=C0, intervals=Is}, Y, Z) ->
+    case Is of
+        #{Y := Ls} ->
+            [{Z, Xl, Xr, {R,G,B,A*(C/255)}}||{Xl,Xr,C} <- Ls];
+	[_|_] ->
+            [{Z, Xl, Xr, C0} || {Yg, Xl, Xr} <- Is, Yg =:= Y];
+        _ ->
+            []
+    end;
 object_line_data(#image_object{type=pixel,
                                span={X0,_,X1,_}, color=C}, _, Z) ->
     [{Z, X0, X1, C}].
@@ -308,7 +322,7 @@ is_object_on_line(#image_object{span={_,Y0,_,Y1}}, Y) ->
     if Y < Y0; Y > Y1 -> false;
        true -> true
     end.
-    
+
 %%% primitives to line_spans
 
 %% compile objects to linespans
@@ -334,6 +348,11 @@ precompile_objects([#image_object{type=arc, points=[P0,P1], internals=D}=O|Os]) 
                              linespans_to_map(line_to_linespans(Ep0,Ep1,1),M)
                      end, #{}, Es),
     [O#image_object{type=line, intervals=Ls}|precompile_objects(Os)];
+precompile_objects([#image_object{type=text_horizontal,
+                                  points=[P0], internals={#{}=Font,Text}}=O|Os]) ->
+    Ls = egd_ttf:text_horizontal_ls(P0, Font, Text),
+    Map = linespans_to_map(Ls),
+    [O#image_object{intervals=Map}|precompile_objects(Os)];
 precompile_objects([#image_object{type=text_horizontal,
                                   points=[P0], internals={Font,Text}}=O|Os]) ->
     [O#image_object{intervals=text_horizontal_ls(P0,Font,Text)}|precompile_objects(Os)];

@@ -31,6 +31,7 @@
          image_shape/1,
          image_primitives/1,
          image_colors/1,
+         image_alpha/1,
          image_font/1,
          image_fans/1,
          image_png_compliant/1]).
@@ -40,7 +41,7 @@ suite() ->
 
 all() ->
     [image_create_and_destroy, image_shape,
-     image_primitives, image_colors, image_font,
+     image_primitives, image_colors, image_alpha, image_font,
      image_fans,
      image_png_compliant].
 
@@ -110,6 +111,42 @@ image_colors(Config) when is_list(Config) ->
     ok = egd:destroy(Image),
     erase(image_size),
     ok.
+
+image_alpha(Config) when is_list(Config) ->
+    {W,H} = get_size(proplists:get_value(max_size, Config)),
+    Dir = proplists:get_value(priv_dir, Config),
+    Image = egd:create(W, H),
+    put(image_size, {W,H}),
+
+    LightGreenTrans = egd:color({30, 175, 23, 127}),
+    Black = {0.0,0.0,0.0,1.0},
+
+    T = 10,
+    DrawRec =
+        fun(N) ->
+                P1 = {5+T*N,5+T*N},
+                P2 = {100+T*N, 50+T*N},
+                egd:filledRectangle(Image, P1, P2, LightGreenTrans),
+                egd:rectangle(Image, P1, P2, Black),
+                N+1
+        end,
+    [DrawRec(N) || N <- lists:seq(1,5)],
+
+    egd:rectangle(Image, {5,5}, {W-5, H-5}, Black),
+
+    Png1 = <<_/binary>> = egd:render(Image,png,[{render_engine, alpha}]),
+    File1 = filename:join(Dir,"image_colors_alpha.png"),
+    ok = egd:save(Png1,File1),
+    ct:log("<p>Image alpha:</p><img src=\"~s\" />~n", [File1]),
+    Png2 = <<_/binary>> = egd:render(Image,png,[{render_engine, opaque}]),
+    File2 = filename:join(Dir,"image_colors_opaque.png"),
+    ok = egd:save(Png2,File2),
+    ct:log("<p>Image opaque:</p><img src=\"~s\" />~n", [File2]),
+
+    ok = egd:destroy(Image),
+    erase(image_size),
+    ok.
+
 
 %% Image shape API test.
 image_shape(Config) when is_list(Config) ->
@@ -194,6 +231,9 @@ image_font(Config) when is_list(Config) ->
     Filename = filename:join([code:priv_dir(egd),"fonts","6x11_latin1.wingsfont"]),
     Font = egd_font:load(Filename),
 
+    ok = egd_ttf:init(),
+    TTFFont = egd_ttf:load(#{face => "DejaVu Sans"}),
+
     % simple text
     ok = egd:text(Im, get_point(), Font, "Hello World", Fgc),
     <<_/binary>> = egd:render(Im, png),
@@ -206,44 +246,46 @@ image_font(Config) when is_list(Config) ->
     AlphaSmStr  = "abcdefghijklmnopqrstuvwxyz",   % Codes  97 -> 122
     GlyphStr4   = "{|}~",                         % Codes 123 -> 126
 
-    ok = egd:text(Im, get_point(), Font, GlyphStr1, Fgc),
-    Png1 = <<_/binary>> = egd:render(Im, png),
+    ok = egd:text(Im, {X0, Y0} = get_point(), Font, GlyphStr1, Fgc),
+    ok = egd:text(Im, {X0, Y0+20}, TTFFont, GlyphStr1, Fgc),
+    Png1 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File1 = filename:join(Dir,"text1.png"),
     ok = egd:save(Png1,File1),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File1]),
 
     ok = egd:text(Im, get_point(), Font, NumericStr, Fgc),
-    Png2 = <<_/binary>> = egd:render(Im, png),
+    Png2 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File2 = filename:join(Dir,"text2.png"),
     ok = egd:save(Png2,File2),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File2]),
 
     ok = egd:text(Im, get_point(), Font, GlyphStr2, Fgc),
-    Png3 = <<_/binary>> = egd:render(Im, png),
+    Png3 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File3 = filename:join(Dir,"text3.png"),
     ok = egd:save(Png3,File3),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File3]),
 
     ok = egd:text(Im, get_point(), Font, AlphaBigStr, Fgc),
-    Png4 = <<_/binary>> = egd:render(Im, png),
+    Png4 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File4 = filename:join(Dir,"text4.png"),
     ok = egd:save(Png4,File4),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File4]),
 
     ok = egd:text(Im, get_point(), Font, GlyphStr3, Fgc),
-    Png5 = <<_/binary>> = egd:render(Im, png),
+    Png5 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File5 = filename:join(Dir,"text5.png"),
     ok = egd:save(Png5,File5),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File5]),
 
-    ok = egd:text(Im, get_point(), Font, AlphaSmStr, Fgc),
-    Png6 = <<_/binary>> = egd:render(Im, png),
+    ok = egd:text(Im, {X6,Y6} = get_point(), Font, AlphaSmStr, Fgc),
+    ok = egd:text(Im, {X6,Y6+20}, TTFFont, AlphaSmStr, Fgc),
+    Png6 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File6 = filename:join(Dir,"text6.png"),
     ok = egd:save(Png6,File6),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File6]),
 
     ok = egd:text(Im, get_point(), Font, GlyphStr4, Fgc),
-    Png7 = <<_/binary>> = egd:render(Im, png),
+    Png7 = <<_/binary>> = egd:render(Im, png, [{render_engine, 'alpha'}]),
     File7 = filename:join(Dir,"text7.png"),
     ok = egd:save(Png7,File7),
     ct:log("<p>Image:</p><img src=\"~s\" />~n", [File7]),
